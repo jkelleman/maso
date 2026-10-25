@@ -54,3 +54,22 @@ Install the test dependencies and run the deterministic validation suite:
 python -m pip install -r requirements.txt
 python -m pytest tests/evaluation/test_trajectory.py -v
 ```
+
+## Production artifacts
+
+Pushing a release tag in the form `vMAJOR.MINOR.PATCH` runs
+`.github/workflows/deploy.yml`, independently of pull request CI. The workflow
+checks source linting and security with Flake8 and Bandit, builds a source
+distribution and wheel, and validates their metadata with Twine. Download the
+`maso-production-dist` artifact from the workflow run within five days.
+
+To build and validate the same distributions locally:
+
+```bash
+python -m pip install build==1.6.1 twine==7.0.0
+python -m build
+python -m twine check --strict dist/*
+```
+
+The workflow only stores build artifacts; it does not publish packages or sign
+them. Artifacts can be passed to a separate signing or publishing process.

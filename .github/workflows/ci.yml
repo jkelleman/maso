@@ -46,4 +46,4 @@ jobs:
         VECTOR_DB_URL: "mock://localhost:8000"
         STREAM_WINDOW_SIZE_SECONDS: 60
       run: |
-        python -m pytest tests/evaluation/test_trajectory.py -v --cov=src --cov-report=term-missing
+        python -m pytest tests/ -v --cov=src --cov-report=term-missing
