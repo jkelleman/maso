@@ -55,7 +55,7 @@ class SemanticCache:
         self.max_entries = max_entries
         self.similarity_threshold = similarity_threshold
         self._clock = clock
-        self._entries: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self._entries: OrderedDict[tuple[str, str], _CacheEntry] = OrderedDict()
         self._baselines: dict[tuple[Hashable, Hashable], _BaselineEntry] = {}
         self._metrics: dict[Hashable, deque[tuple[float, str, Any]]] = defaultdict(deque)
         self._lock = threading.RLock()
@@ -100,7 +100,7 @@ class SemanticCache:
         vector: tuple[float, ...],
         namespace: str,
         threshold: float,
-    ) -> Optional[str]:
+    ) -> Optional[tuple[str, str]]:
         best_key = None
         best_similarity = -1.0
         for candidate_key, candidate in self._entries.items():
@@ -128,15 +128,16 @@ class SemanticCache:
 
         with self._lock:
             self._prune_expired(self._clock())
-            entry = self._entries.get(cache_key)
-            if entry is not None and entry.namespace == namespace and (
+            scoped_key = (namespace, cache_key)
+            entry = self._entries.get(scoped_key)
+            if entry is not None and (
                 vector is None
                 or (
                     entry.context_vector is not None
                     and self._context_similarity(vector, entry.context_vector) >= threshold
                 )
             ):
-                self._entries.move_to_end(cache_key)
+                self._entries.move_to_end(scoped_key)
                 return entry.payload
             if vector is None:
                 return None
@@ -158,13 +159,14 @@ class SemanticCache:
         """Store an episodic result, evicting the least-recently-used entry if full."""
         vector = self._vector(context_vector)
         with self._lock:
-            self._entries[cache_key] = _CacheEntry(
+            scoped_key = (namespace, cache_key)
+            self._entries[scoped_key] = _CacheEntry(
                 timestamp=self._clock(),
                 payload=payload,
                 context_vector=vector,
                 namespace=namespace,
             )
-            self._entries.move_to_end(cache_key)
+            self._entries.move_to_end(scoped_key)
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
 
