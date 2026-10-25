@@ -1,6 +1,26 @@
 # Multi-Agent Stream Orchestration Framework (MASO)
 
-MASO is a Python framework for bounded telemetry stream processing and asynchronous multi-agent orchestration. The core uses only the Python standard library; external model, embedding, and storage integrations can be supplied by applications.
+## TL;DR
+
+MASO is a real-time multi-agent stream orchestration engine optimized for processing high-frequency data using stateful sliding window tokenization and multi-tier semantic memory networks. The framework operates with bounded context windows, deterministic signal compression, and concurrent agent graph execution, enabling sub-millisecond cache performance and quantifiable observability for production MLOps pipelines.
+
+## Core Use Cases
+
+- **High-Frequency Physiological Tracking**: Ingesting live biometric telemetry streams (HR, HRV, core strain) and downsampling signals into semantic token states for model routing.
+- **Stateful Asynchronous Coaching Systems**: Managing cross-agent relational dependencies and memory persistence across long-running wellness or performance evaluation loops.
+- **Deterministic MLOps Validation**: Running isolated agent trajectory tests under simulated device payloads to verify output consistency and eliminate runtime context drift.
+
+## Target Audience
+
+- **Foundation AI Researchers** building native multi-agent orchestration backends beyond standard stateless wrapper implementations.
+- **Machine Learning Infrastructure Engineers** seeking optimized context structures, streaming token boundaries, and high-performance caching layers.
+- **Data Platform Engineers** handling low-latency time-series integration pipelines across multi-node compute clusters.
+
+## Key Benefits
+
+- **Maximized Token Efficiency**: Specialized deserialization parsers minimize context bloating by mapping raw signals straight into dense data vectors.
+- **Sub-Millisecond Cache Performance**: Multi-tier semantic caching layer routes recurrent states instantly, bypassing redundant deep model execution calls to reduce inference overhead.
+- **Quantifiable Observability**: Inherent telemetry hooks actively track client-side compute latency and monitor for viewport or rendering drops under intense data strain.
 
 ## Capabilities
 
