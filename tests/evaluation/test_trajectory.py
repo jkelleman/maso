@@ -136,8 +136,8 @@ def test_async_graph_runs_parallel_nodes_then_dependencies():
 
     async def evaluator(tokens, state):
         assert state["dependencies"] == {
-            "a": "a-result",
-            "b": "b-result",
+            "signal": "a-result",
+            "context": "b-result",
         }
         return "recovery-evaluated"
 
