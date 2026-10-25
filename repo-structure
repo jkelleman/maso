@@ -1,0 +1,19 @@
+maso-framework/
+│
+├── config/
+│   └── settings.py              # Window size configs and API thresholds
+│
+├── src/
+│   ├── __init__.py
+│   ├── engine.py                # Core StreamOrchestrator loop
+│   ├── memory.py                # Multi-tier SemanticCache implementation
+│   └── agents.py                # Specialized worker nodes (e.g. BiometricSignalProcessor)
+│
+├── tests/
+│   ├── __init__.py
+│   └── evaluation/
+│       └── test_trajectory.py   # Deterministic trajectory validation harness
+│
+├── .env                         # Local runtime credentials
+├── requirements.txt             # Framework dependencies
+└── README.md                    # Optimized profile page
