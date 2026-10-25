@@ -30,6 +30,21 @@ jobs:
           python-version: "3.11"
           cache: 'pip'
 
+      - name: Validate Release Version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          with open("pyproject.toml", "rb") as source:
+              version = tomllib.load(source)["project"]["version"]
+          tag = os.environ["RELEASE_TAG"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Release tag {tag} does not match package version {version}")
+          PY
+
       - name: Install Secure Production Build Tools
         run: |
           python -m pip install --upgrade pip
