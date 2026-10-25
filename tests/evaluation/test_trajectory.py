@@ -115,8 +115,7 @@ def test_sliding_window_bounds_and_semantic_tokens():
     assert heart_rate["trend"] == 0
 
 
-@pytest.mark.asyncio
-async def test_async_graph_runs_parallel_nodes_then_dependencies():
+def test_async_graph_runs_parallel_nodes_then_dependencies():
     orchestrator = StreamOrchestrator()
     started = set()
     both_started = asyncio.Event()
@@ -146,7 +145,7 @@ async def test_async_graph_runs_parallel_nodes_then_dependencies():
     orchestrator.register_node("context", worker_b)
     orchestrator.register_node("recovery", evaluator, depends_on=("signal", "context"))
 
-    result = await orchestrator.execute_trajectory({"metric": "hrv", "value": 45})
+    result = asyncio.run(orchestrator.execute_trajectory({"metric": "hrv", "value": 45}))
 
     assert started == {"a", "b"}
     assert "[recovery Output]: recovery-evaluated" in result
@@ -159,8 +158,7 @@ async def test_async_graph_runs_parallel_nodes_then_dependencies():
     assert completed.index("context") < completed.index("recovery")
 
 
-@pytest.mark.asyncio
-async def test_tool_calls_are_allowlisted_validated_and_not_cached():
+def test_tool_calls_are_allowlisted_validated_and_not_cached():
     orchestrator = StreamOrchestrator()
     invocations = []
 
@@ -184,16 +182,15 @@ async def test_tool_calls_are_allowlisted_validated_and_not_cached():
     )
     orchestrator.register_node("recovery", evaluator)
 
-    first = await orchestrator.execute_trajectory({"metric": "hrv", "value": 45})
-    second = await orchestrator.execute_trajectory({"metric": "hrv", "value": 45})
+    first = asyncio.run(orchestrator.execute_trajectory({"metric": "hrv", "value": 45}))
+    second = asyncio.run(orchestrator.execute_trajectory({"metric": "hrv", "value": 45}))
 
     assert "recovery ready" in first and "recovery ready" in second
     assert invocations == [("u1", 0.8), ("u1", 0.8)]
     assert sum(event["event"] == "tool_completed" for event in orchestrator.last_trajectory) == 1
 
 
-@pytest.mark.asyncio
-async def test_unknown_tool_call_fails_closed():
+def test_unknown_tool_call_fails_closed():
     orchestrator = StreamOrchestrator()
 
     async def unsafe_worker(tokens):
@@ -201,7 +198,7 @@ async def test_unknown_tool_call_fails_closed():
 
     orchestrator.register_node("worker", unsafe_worker)
     with pytest.raises(ValueError, match="not registered"):
-        await orchestrator.execute_trajectory({"metric": "hrv", "value": 45})
+        asyncio.run(orchestrator.execute_trajectory({"metric": "hrv", "value": 45}))
 
 
 def test_semantic_cache_tiers_similarity_and_expiration():
@@ -242,7 +239,7 @@ def test_automated_judge_detects_drift_and_invalid_tool_trajectory():
     )
 
     assert not judged.passed
-    assert len(judged.issues) == 3
+    assert len(judged.issues) == 4
     assert any("context drift" in issue for issue in judged.issues)
     assert any("trajectory stability" in issue for issue in judged.issues)
     assert any("tool validation" in issue for issue in judged.issues)

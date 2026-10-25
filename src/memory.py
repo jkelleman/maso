@@ -86,6 +86,31 @@ class SemanticCache:
     def _is_expired(self, timestamp: float, ttl: Optional[float], now: float) -> bool:
         return ttl is not None and (ttl == 0 or now - timestamp >= ttl)
 
+    def _prune_expired(self, now: float) -> None:
+        expired = [
+            key for key, entry in self._entries.items()
+            if self._is_expired(entry.timestamp, self.ttl, now)
+        ]
+        for key in expired:
+            del self._entries[key]
+
+    def _find_similar(
+        self,
+        vector: tuple[float, ...],
+        namespace: str,
+        threshold: float,
+    ) -> Optional[str]:
+        best_key = None
+        best_similarity = -1.0
+        for candidate_key, candidate in self._entries.items():
+            if candidate.namespace != namespace or candidate.context_vector is None:
+                continue
+            similarity = self._cosine_similarity(vector, candidate.context_vector)
+            if similarity >= threshold and similarity > best_similarity:
+                best_key = candidate_key
+                best_similarity = similarity
+        return best_key
+
     def get(
         self,
         cache_key: str,
@@ -100,37 +125,22 @@ class SemanticCache:
         if not 0 <= threshold <= 1:
             raise ValueError("similarity_threshold must be between 0 and 1")
 
-        now = self._clock()
         with self._lock:
+            self._prune_expired(self._clock())
             entry = self._entries.get(cache_key)
-            if entry is not None:
-                if self._is_expired(entry.timestamp, self.ttl, now):
-                    del self._entries[cache_key]
-                elif entry.namespace == namespace and (
-                    vector is None or (
-                        entry.context_vector is not None
-                        and self._cosine_similarity(vector, entry.context_vector) >= threshold
-                    )
-                ):
-                    self._entries.move_to_end(cache_key)
-                    return entry.payload
-
+            if entry is not None and entry.namespace == namespace and (
+                vector is None
+                or (
+                    entry.context_vector is not None
+                    and self._cosine_similarity(vector, entry.context_vector) >= threshold
+                )
+            ):
+                self._entries.move_to_end(cache_key)
+                return entry.payload
             if vector is None:
                 return None
 
-            best_key: Optional[str] = None
-            best_similarity = -1.0
-            for candidate_key, candidate in list(self._entries.items()):
-                if self._is_expired(candidate.timestamp, self.ttl, now):
-                    del self._entries[candidate_key]
-                    continue
-                if candidate.namespace != namespace or candidate.context_vector is None:
-                    continue
-                similarity = self._cosine_similarity(vector, candidate.context_vector)
-                if similarity >= threshold and similarity > best_similarity:
-                    best_key = candidate_key
-                    best_similarity = similarity
-
+            best_key = self._find_similar(vector, namespace, threshold)
             if best_key is None:
                 return None
             self._entries.move_to_end(best_key)

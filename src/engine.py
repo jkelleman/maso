@@ -322,15 +322,10 @@ class StreamOrchestrator:
         events.append({"event": "node_completed", "node": node.name})
         return output, tool_results
 
-    async def execute_trajectory(
+    def _cache_context(
         self,
-        metric_payload: Optional[Mapping[str, Any]] = None,
-    ) -> str:
-        """Ingest an optional point and execute the registered graph asynchronously."""
-        if metric_payload is not None:
-            self.ingest_telemetry(metric_payload)
-        active_window = self.compute_sliding_window()
-        tokens = self.compress_to_semantic_tokens(active_window)
+        tokens: list[dict[str, Any]],
+    ) -> tuple[str, str, tuple[float, ...]]:
         topology = ",".join(self._nodes)
         metric_scope = ",".join(
             token["metric"] for token in tokens if token.get("type") == "metric_summary"
@@ -338,18 +333,19 @@ class StreamOrchestrator:
         namespace = f"graph:{self._graph_revision}:{topology}:metrics:{metric_scope}"
         canonical_tokens = json.dumps(tokens, sort_keys=True, separators=(",", ":"), allow_nan=False)
         digest = hashlib.sha256(canonical_tokens.encode("utf-8")).hexdigest()
-        cache_key = f"{namespace}:{digest}"
-        vector = self._context_vector(tokens)
-        cached = self.cache.get(cache_key, vector, namespace=namespace)
-        if cached is not None:
-            self.last_trajectory = [{"event": "cache_hit"}]
-            return f"[Cache Hit] {cached}"
+        return f"{namespace}:{digest}", namespace, self._context_vector(tokens)
 
+    def _validate_graph(self) -> None:
         for node in self._nodes.values():
             missing = set(node.dependencies) - self._nodes.keys()
             if missing:
                 raise ValueError(f"node {node.name!r} has unknown dependencies: {sorted(missing)}")
 
+    async def _run_graph(
+        self,
+        tokens: list[dict[str, Any]],
+        active_window: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], dict[str, list[tuple[str, Any]]], list[dict[str, Any]]]:
         events: list[dict[str, Any]] = []
         outputs: dict[str, Any] = {}
         tool_results: dict[str, list[tuple[str, Any]]] = {}
@@ -393,13 +389,34 @@ class StreamOrchestrator:
                     raise
                 outputs[name] = output
                 tool_results[name] = called_tools
+        return outputs, tool_results, events
 
-        self.last_trajectory = list(events)
-        rendered = " ".join(
+    def _render_outputs(self, outputs: Mapping[str, Any]) -> str:
+        return " ".join(
             f"[{name} Output]: {outputs[name]}"
             for name in self._nodes
             if outputs[name] is not None
         )
+
+    async def execute_trajectory(
+        self,
+        metric_payload: Optional[Mapping[str, Any]] = None,
+    ) -> str:
+        """Ingest an optional point and execute the registered graph asynchronously."""
+        if metric_payload is not None:
+            self.ingest_telemetry(metric_payload)
+        active_window = self.compute_sliding_window()
+        tokens = self.compress_to_semantic_tokens(active_window)
+        cache_key, namespace, vector = self._cache_context(tokens)
+        cached = self.cache.get(cache_key, vector, namespace=namespace)
+        if cached is not None:
+            self.last_trajectory = [{"event": "cache_hit"}]
+            return f"[Cache Hit] {cached}"
+
+        self._validate_graph()
+        outputs, tool_results, events = await self._run_graph(tokens, active_window)
+        self.last_trajectory = list(events)
+        rendered = self._render_outputs(outputs)
         if not any(tool_results.values()):
             self.cache.set(cache_key, rendered, vector, namespace=namespace)
         return rendered
