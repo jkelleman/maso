@@ -1,85 +1,56 @@
 # Multi-Agent Stream Orchestration Framework (MASO)
 
-An open-source, production-ready multi-agent orchestration ecosystem designed for stateful stream computing, time-series data abstraction, and low-latency foundation model execution. 
+MASO is a Python framework for bounded telemetry stream processing and asynchronous multi-agent orchestration. The core uses only the Python standard library; external model, embedding, and storage integrations can be supplied by applications.
 
-This framework transitions beyond stateless, isolated prompt engineering into robust, distributed execution topologies capable of maintaining context across long-running autonomous execution loops.
+## Capabilities
 
-## Key Architectural Capabilities
+### Stream processing
 
-### 1. Stateful Stream Computing & Time-Series Aggregation
-* **Sliding Window Tokenization:** Processes continuous high-frequency metrics using rolling temporal bounds, downsampling raw signal feeds into dense semantic tokens before passing data payloads to the agent graph.
-* **Low-Latency Deserialization:** Utilizes specialized parsers to rapidly map complex structured payloads into optimized context arrays, mitigating context window bloating and lowering inference overhead.
+- Maintains a bounded rolling window using event timestamps.
+- Compresses high-frequency numeric measurements into deterministic per-metric summaries, including sample count, range, latest value, trend, and variability.
+- Accepts a single `metric`/`value` point or a mapping of metrics in each telemetry point.
 
-### 2. Distributed Graph Orchestration & Memory Layering
-* **Asynchronous Execution Loops:** Implements non-blocking event drivers to manage cross-agent dependencies, handle multi-turn conversations, and enforce structural data lineage.
-* **Multi-Tier Semantic Caching:** Integrates an advanced cache layer paired with vector and graph database backends (RAG) to eliminate repetitive external LLM API calls and drastically reduce runtime latency.
+### Agent graph and tools
 
-### 3. Rigorous MLOps Validation & Test Harness
-* **Deterministic Trajectory Evaluation:** Features an isolated testing framework to run agent simulations under controlled parameters, ensuring logical reproducibility and trajectory stability across iterations.
-* **Automated Judge Pipelines:** Built-in programmatic evaluation mechanics (LLM-as-a-judge) designed to benchmark prompt performance, detect semantic context drift, and catch tool-calling or runtime failures before production deployment.
+- Runs independent agent nodes concurrently and schedules dependent nodes when their inputs are ready.
+- Supports synchronous and asynchronous handlers, with dependency outputs available in the node state.
+- Executes only explicitly registered tools and supports per-tool argument validators.
 
----
+### Memory and evaluation
 
-## Technical Architecture & Dependencies
+- Provides bounded, TTL-based episodic caching with optional context-vector matching.
+- Separates short-term runtime measurements from long-term user baseline values.
+- Includes a deterministic trajectory judge for context drift, node execution stability, and tool-call validation. It does not make external foundation-model calls.
 
-* **Core Engine:** Python 3.11+, TypeScript
-* **Orchestration Layers:** LangGraph, LangChain, DSPy
-* **Vector & Graph Storage:** Qdrant / Pinecone / Neo4j
-* **Observability & MLOps:** MLflow, Weights & Biases
+## Getting started
 
----
-
-## Getting Started
-
-### 1. Installation
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Basic Configuration
-Configure your data environment variables (`.env`):
-```env
-OPENAI_API_KEY=your_key_here
-VECTOR_DB_URL=your_db_endpoint
-STREAM_WINDOW_SIZE_SECONDS=60
-```
-
-### 3. Initializing a Stateful Stream Agent
 ```python
-from maso.engine import StreamOrchestrator
-from maso.agents import ResearchAgent
-from maso.memory import SemanticCache
+from src.engine import StreamOrchestrator
+from src.memory import SemanticCache
 
-# Initialize multi-tier semantic memory
-memory_layer = SemanticCache(ttl_seconds=3600)
 
-# Instantiate the streaming runtime
-orchestrator = StreamOrchestrator(
-    window_bounds="rolling",
-    cache=memory_layer
+class BiometricSignalProcessor:
+    name = "BiometricSignalProcessor"
+
+    def process_tokens(self, tokens):
+        return f"Processed {len(tokens)} semantic metric summaries."
+
+
+orchestrator = StreamOrchestrator(cache=SemanticCache(ttl_seconds=3600))
+orchestrator.register_agent(BiometricSignalProcessor())
+result = orchestrator.execute_trajectory_step(
+    {"metric": "heart_rate", "value": 72.5}
 )
-
-# Register a specialized worker node
-orchestrator.register_agent(
-    ResearchAgent(name="BiometricSignalProcessor")
-)
-
-# Start ingestion pipeline
-orchestrator.start_stream_loop()
+print(result)
 ```
 
----
+The synchronous `execute_trajectory_step` method is provided for legacy callers. Async applications should await `execute_trajectory` or `execute_trajectory_step_async`.
 
-## System Evaluation & Benchmarking
+## Tests
 
-To execute the deterministic test suite and analyze agent execution trajectories under simulated multi-node loads:
+Install the test dependencies and run the deterministic validation suite:
 
 ```bash
-pytest tests/evaluation/test_trajectory_consistency.py --mlflow-log
+python -m pip install -r requirements.txt
+python -m pytest tests/evaluation/test_trajectory.py -v
 ```
-
----
-
-## Enterprise Governance & Alignment
-
-This ecosystem is designed to enforce strict technical data governance, making it highly adaptable for complex telemetry systems, medical or health informatics, and data tracking architectures requiring high operational trust, deterministic monitoring flags, and rigorous safety controls.
