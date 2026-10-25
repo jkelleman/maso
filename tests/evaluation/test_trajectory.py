@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from src.agents import BiometricProcessor, RecoveryEvaluator
 from src.engine import StreamOrchestrator
 from src.memory import SemanticCache
 
@@ -156,6 +157,50 @@ def test_async_graph_runs_parallel_nodes_then_dependencies():
     ]
     assert completed.index("signal") < completed.index("recovery")
     assert completed.index("context") < completed.index("recovery")
+
+
+def test_biometric_nodes_compare_window_summaries_with_user_baselines():
+    cache = SemanticCache()
+    cache.set_baseline("user-1", "heart_rate", {"mean": 60})
+    orchestrator = StreamOrchestrator(cache=cache, window_size_seconds=60)
+    orchestrator.register_node("biometrics", BiometricProcessor())
+    orchestrator.register_node(
+        "recovery",
+        RecoveryEvaluator(cache, "user-1"),
+        depends_on=("biometrics",),
+    )
+
+    result = asyncio.run(orchestrator.execute_trajectory({
+        "metrics": {"heart_rate": 72, "hrv": 45},
+    }))
+
+    assert "[biometrics Output]" in result
+    assert "[recovery Output]" in result
+    output = result.split("[recovery Output]: ", 1)[1]
+    assert "'baseline_mean': 60.0" in output
+    assert "'current_mean': 72.0" in output
+    assert "'percent_change': 20.0" in output
+    assert "hrv" not in output
+
+
+def test_recovery_evaluator_handles_zero_baseline_without_division():
+    cache = SemanticCache()
+    cache.set_baseline("user-1", "heart_rate", 0)
+    orchestrator = StreamOrchestrator(cache=cache)
+    orchestrator.register_node("biometrics", BiometricProcessor())
+    orchestrator.register_node(
+        "recovery",
+        RecoveryEvaluator(cache, "user-1"),
+        depends_on=("biometrics",),
+    )
+
+    result = asyncio.run(orchestrator.execute_trajectory({
+        "metric": "heart_rate",
+        "value": 1,
+    }))
+
+    assert "'delta': 1.0" in result
+    assert "'percent_change': None" in result
 
 
 def test_tool_calls_are_allowlisted_validated_and_not_cached():
