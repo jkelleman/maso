@@ -199,6 +199,22 @@ def test_unknown_tool_call_fails_closed():
     orchestrator.register_node("worker", unsafe_worker)
     with pytest.raises(ValueError, match="not registered"):
         asyncio.run(orchestrator.execute_trajectory({"metric": "hrv", "value": 45}))
+    assert orchestrator.last_trajectory == [
+        {"event": "node_started", "node": "worker"}
+    ]
+
+
+def test_dependency_cycles_are_rejected():
+    orchestrator = StreamOrchestrator()
+
+    async def node(tokens):
+        return "complete"
+
+    orchestrator.register_node("first", node, depends_on=("second",))
+    orchestrator.register_node("second", node, depends_on=("first",))
+
+    with pytest.raises(ValueError, match="dependency cycle"):
+        asyncio.run(orchestrator.execute_trajectory({"metric": "hrv", "value": 45}))
 
 
 def test_semantic_cache_tiers_similarity_and_expiration():
@@ -214,6 +230,7 @@ def test_semantic_cache_tiers_similarity_and_expiration():
 
     assert cache.get("query-b", (0.9999, 0.01), namespace="recovery") == "cached"
     assert cache.get("query-b", (0.0, 1.0), namespace="recovery") is None
+    assert cache.get("query-c", (100.0, 0.0), namespace="recovery") is None
     assert cache.get_baseline("user-1", "hrv") == {"mean": 45}
     assert cache.recent_metrics("user-1")[0][1:] == ("heart_rate", 72)
 

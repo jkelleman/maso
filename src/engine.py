@@ -223,8 +223,12 @@ class StreamOrchestrator:
                 continue
             vector.extend((
                 float(token["mean"]),
+                float(token["minimum"]),
+                float(token["maximum"]),
+                float(token["latest"]),
                 float(token["trend"]),
                 float(token["variability"]),
+                float(token["samples"]),
             ))
         return tuple(vector) or (0.0,)
 
@@ -386,6 +390,7 @@ class StreamOrchestrator:
                         other.cancel()
                     if running:
                         await asyncio.gather(*running, return_exceptions=True)
+                    self.last_trajectory = list(events)
                     raise
                 outputs[name] = output
                 tool_results[name] = called_tools

@@ -73,15 +73,16 @@ class SemanticCache:
         return vector
 
     @staticmethod
-    def _cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    def _context_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
         if len(left) != len(right):
             return -1.0
         left_norm = math.sqrt(sum(value * value for value in left))
         right_norm = math.sqrt(sum(value * value for value in right))
         if left_norm == 0 or right_norm == 0:
             return 1.0 if left == right else 0.0
-        similarity = sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
-        return max(-1.0, min(1.0, similarity))
+        cosine = sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
+        magnitude_ratio = min(left_norm, right_norm) / max(left_norm, right_norm)
+        return max(-1.0, min(1.0, cosine)) * magnitude_ratio
 
     def _is_expired(self, timestamp: float, ttl: Optional[float], now: float) -> bool:
         return ttl is not None and (ttl == 0 or now - timestamp >= ttl)
@@ -105,7 +106,7 @@ class SemanticCache:
         for candidate_key, candidate in self._entries.items():
             if candidate.namespace != namespace or candidate.context_vector is None:
                 continue
-            similarity = self._cosine_similarity(vector, candidate.context_vector)
+            similarity = self._context_similarity(vector, candidate.context_vector)
             if similarity >= threshold and similarity > best_similarity:
                 best_key = candidate_key
                 best_similarity = similarity
@@ -132,7 +133,7 @@ class SemanticCache:
                 vector is None
                 or (
                     entry.context_vector is not None
-                    and self._cosine_similarity(vector, entry.context_vector) >= threshold
+                    and self._context_similarity(vector, entry.context_vector) >= threshold
                 )
             ):
                 self._entries.move_to_end(cache_key)
