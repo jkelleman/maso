@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 from src.memory import SemanticCache
+from src.telemetry import ClientPerformanceHook
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class StreamOrchestrator:
         self.window_bounds = window_bounds
         self.window_size_seconds = float(window_size_seconds)
         self.cache = cache if cache is not None else SemanticCache()
+        self.telemetry = ClientPerformanceHook()
         self.agents: list[dict[str, Any]] = []
         self.stream_buffer: deque[dict[str, Any]] = deque(maxlen=max_buffer_size)
         self.max_concurrency = max_concurrency
@@ -442,8 +444,11 @@ class StreamOrchestrator:
     async def execute_trajectory(
         self,
         metric_payload: Optional[Mapping[str, Any]] = None,
+        *,
+        simulated_frame_rate: float = 90.0,
     ) -> str:
         """Ingest an optional point and execute the registered graph asynchronously."""
+        start_time = time.perf_counter()
         if metric_payload is not None:
             self.ingest_telemetry(metric_payload)
         active_window = self.compute_sliding_window()
@@ -456,6 +461,9 @@ class StreamOrchestrator:
             cached = self.cache.get(cache_key, vector, namespace=namespace)
             if cached is not None:
                 self.last_trajectory = [{"event": "cache_hit"}]
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                self.telemetry.record_trace_latency("CacheLookup", duration_ms)
+                self.telemetry.track_client_render_fps(simulated_frame_rate, len(tokens))
                 return f"[Cache Hit] {cached}"
 
         self._validate_graph()
@@ -464,18 +472,35 @@ class StreamOrchestrator:
         rendered = self._render_outputs(outputs)
         if cacheable and not any(tool_results.values()):
             self.cache.set(cache_key, rendered, vector, namespace=namespace)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        self.telemetry.record_trace_latency("FullPipelineStep", duration_ms)
+        self.telemetry.track_client_render_fps(simulated_frame_rate, len(tokens))
         return rendered
 
-    async def execute_trajectory_step_async(self, metric_payload: Mapping[str, Any]) -> str:
+    async def execute_trajectory_step_async(
+        self,
+        metric_payload: Mapping[str, Any],
+        simulated_frame_rate: float = 90.0,
+    ) -> str:
         """Async compatibility alias for the original single-step entry point."""
-        return await self.execute_trajectory(metric_payload)
+        return await self.execute_trajectory(
+            metric_payload,
+            simulated_frame_rate=simulated_frame_rate,
+        )
 
-    def execute_trajectory_step(self, metric_payload: Mapping[str, Any]) -> str:
+    def execute_trajectory_step(
+        self,
+        metric_payload: Mapping[str, Any],
+        simulated_frame_rate: float = 90.0,
+    ) -> str:
         """Synchronous compatibility wrapper for legacy callers and tests."""
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.execute_trajectory(metric_payload))
+            return asyncio.run(self.execute_trajectory(
+                metric_payload,
+                simulated_frame_rate=simulated_frame_rate,
+            ))
         raise RuntimeError(
             "execute_trajectory_step cannot run inside an event loop; "
             "use execute_trajectory_step_async instead"

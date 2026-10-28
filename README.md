@@ -1,6 +1,26 @@
 # Multi-Agent Stream Orchestration Framework (MASO)
 
-MASO is a Python framework for bounded telemetry stream processing and asynchronous multi-agent orchestration. The core uses only the Python standard library; external model, embedding, and storage integrations can be supplied by applications.
+## TL;DR
+
+MASO is a real-time multi-agent stream orchestration engine optimized for processing high-frequency data using stateful sliding window tokenization and multi-tier semantic memory networks. The framework operates with bounded context windows, deterministic signal compression, and concurrent agent graph execution, enabling sub-millisecond cache performance and quantifiable observability for production MLOps pipelines.
+
+## Core Use Cases
+
+- **High-Frequency Physiological Tracking**: Ingesting live biometric telemetry streams (HR, HRV, core strain) and downsampling signals into semantic token states for model routing.
+- **Stateful Asynchronous Coaching Systems**: Managing cross-agent relational dependencies and memory persistence across long-running wellness or performance evaluation loops.
+- **Deterministic MLOps Validation**: Running isolated agent trajectory tests under simulated device payloads to verify output consistency and eliminate runtime context drift.
+
+## Target Audience
+
+- **Foundation AI Researchers** building native multi-agent orchestration backends beyond standard stateless wrapper implementations.
+- **Machine Learning Infrastructure Engineers** seeking optimized context structures, streaming token boundaries, and high-performance caching layers.
+- **Data Platform Engineers** handling low-latency time-series integration pipelines across multi-node compute clusters.
+
+## Key Benefits
+
+- **Maximized Token Efficiency**: Specialized deserialization parsers minimize context bloating by mapping raw signals straight into dense data vectors.
+- **Sub-Millisecond Cache Performance**: Multi-tier semantic caching layer routes recurrent states instantly, bypassing redundant deep model execution calls to reduce inference overhead.
+- **Quantifiable Observability**: Inherent telemetry hooks actively track client-side compute latency and monitor for viewport or rendering drops under intense data strain.
 
 ## Capabilities
 
@@ -46,6 +66,41 @@ print(result)
 
 The synchronous `execute_trajectory_step` method is provided for legacy callers. Async applications should await `execute_trajectory` or `execute_trajectory_step_async`.
 
+## Biometric graph nodes
+
+`BiometricProcessor` exposes the engine's metric summaries to downstream graph
+nodes. `RecoveryEvaluator` compares available summary means to baselines stored
+in `SemanticCache`; it returns numeric deltas and percentage changes, not a
+health assessment or recovery recommendation. Missing baselines are omitted,
+and percentage change is `None` when a baseline is zero.
+
+```python
+from src.agents import BiometricProcessor, RecoveryEvaluator
+from src.engine import StreamOrchestrator
+from src.memory import SemanticCache
+
+cache = SemanticCache()
+cache.set_baseline("user-1", "heart_rate", {"mean": 60})
+orchestrator = StreamOrchestrator(cache=cache)
+orchestrator.register_node("biometrics", BiometricProcessor())
+orchestrator.register_node(
+    "recovery",
+    RecoveryEvaluator(cache, "user-1"),
+    depends_on=("biometrics",),
+)
+```
+
+## Scope and gaps
+
+The repository provides timestamp-bounded aggregation, a dependency-aware async
+graph, local semantic caching, generic user baselines, performance sample
+collection, and deterministic trajectory tests. It does not currently provide
+hardware-specific parsers, distributed cache or cluster execution, model-based
+semantic embeddings/inference, a clinical recovery score, real browser
+rendering instrumentation, or measured sub-millisecond performance guarantees.
+Frame rate is a caller-supplied simulation value, and trajectory evaluation is
+deterministic rather than an LLM-as-a-judge call.
+
 ## Tests
 
 Install the test dependencies and run the deterministic validation suite:
@@ -54,3 +109,22 @@ Install the test dependencies and run the deterministic validation suite:
 python -m pip install -r requirements.txt
 python -m pytest tests/evaluation/test_trajectory.py -v
 ```
+
+## Production artifacts
+
+Pushing a release tag in the form `vMAJOR.MINOR.PATCH` runs
+`.github/workflows/deploy.yml`, independently of pull request CI. The workflow
+checks source linting and security with Flake8 and Bandit, builds a source
+distribution and wheel, and validates their metadata with Twine. Download the
+`maso-production-dist` artifact from the workflow run within five days.
+
+To build and validate the same distributions locally:
+
+```bash
+python -m pip install build==1.6.1 twine==7.0.0
+python -m build
+python -m twine check --strict dist/*
+```
+
+The workflow only stores build artifacts; it does not publish packages or sign
+them. Artifacts can be passed to a separate signing or publishing process.
