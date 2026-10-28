@@ -62,13 +62,22 @@ class AutomatedTrajectoryJudge:
         if not set(expected_nodes).issubset(started):
             issues.append("trajectory stability: an expected graph node did not execute")
 
-        tool_started = [
-            event["tool"] for event in trajectory if event["event"] == "tool_started"
-        ]
-        tool_completed = [
-            event["tool"] for event in trajectory if event["event"] == "tool_completed"
-        ]
-        if Counter(tool_started) != Counter(tool_completed):
+        outstanding_tool_calls = Counter()
+        tool_started = []
+        tool_events_match = True
+        for event in trajectory:
+            if event["event"] == "tool_started":
+                tool_started.append(event["tool"])
+                outstanding_tool_calls[(event["node"], event["tool"])] += 1
+            elif event["event"] == "tool_completed":
+                tool_call = (event["node"], event["tool"])
+                if outstanding_tool_calls[tool_call]:
+                    outstanding_tool_calls[tool_call] -= 1
+                    if not outstanding_tool_calls[tool_call]:
+                        del outstanding_tool_calls[tool_call]
+                else:
+                    tool_events_match = False
+        if not tool_events_match or outstanding_tool_calls:
             issues.append("tool validation: tool start/completion events do not match")
         if not set(tool_started).issubset(set(allowed_tools)):
             issues.append("tool validation: an unapproved tool was called")
@@ -440,3 +449,27 @@ def test_automated_judge_accepts_concurrent_tool_completion_order():
     )
 
     assert judged == JudgeResult(passed=True, issues=[])
+
+
+@pytest.mark.parametrize(
+    "trace",
+    [
+        [
+            {"event": "tool_started", "node": "first", "tool": "tool_a"},
+            {"event": "tool_completed", "node": "second", "tool": "tool_a"},
+        ],
+        [
+            {"event": "tool_completed", "node": "first", "tool": "tool_a"},
+            {"event": "tool_started", "node": "first", "tool": "tool_a"},
+        ],
+        [
+            {"event": "tool_started", "node": "first", "tool": "tool_a"},
+        ],
+    ],
+    ids=("wrong-node", "completion-before-start", "unfinished-start"),
+)
+def test_automated_judge_rejects_unmatched_tool_events(trace):
+    judged = AutomatedTrajectoryJudge.evaluate([], trace, allowed_tools=("tool_a",))
+
+    assert not judged.passed
+    assert "tool validation: tool start/completion events do not match" in judged.issues
