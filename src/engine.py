@@ -9,6 +9,7 @@ import json
 import math
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -70,6 +71,7 @@ class StreamOrchestrator:
         self._tools: dict[str, _Tool] = {}
         self._buffer_lock = threading.RLock()
         self._graph_revision = 0
+        self._cache_scope = uuid.uuid4().hex
         self.last_trajectory: list[dict[str, Any]] = []
 
     def register_agent(
@@ -149,11 +151,13 @@ class StreamOrchestrator:
         now = self._clock()
         lower_bound = now - duration
         with self._buffer_lock:
-            active = [
+            retained = [
                 tick for tick in self.stream_buffer
-                if lower_bound <= tick["processed_timestamp"] <= now
+                if tick["processed_timestamp"] >= lower_bound
             ]
-            self.stream_buffer = deque(active, maxlen=self.stream_buffer.maxlen)
+            active = [tick for tick in retained if tick["processed_timestamp"] <= now]
+            active.sort(key=lambda tick: tick["processed_timestamp"])
+            self.stream_buffer = deque(retained, maxlen=self.stream_buffer.maxlen)
             return [dict(tick) for tick in active]
 
     @staticmethod
@@ -336,7 +340,10 @@ class StreamOrchestrator:
         metric_scope = ",".join(
             token["metric"] for token in tokens if token.get("type") == "metric_summary"
         ) or "idle"
-        namespace = f"graph:{self._graph_revision}:{topology}:metrics:{metric_scope}"
+        namespace = (
+            f"graph:{self._cache_scope}:{self._graph_revision}:"
+            f"{topology}:metrics:{metric_scope}"
+        )
         canonical_tokens = json.dumps(tokens, sort_keys=True, separators=(",", ":"), allow_nan=False)
         digest = hashlib.sha256(canonical_tokens.encode("utf-8")).hexdigest()
         return f"{namespace}:{digest}", namespace, self._context_vector(tokens)
@@ -382,7 +389,17 @@ class StreamOrchestrator:
 
             if not running:
                 raise ValueError("agent graph contains a dependency cycle")
-            completed, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+            try:
+                completed, _ = await asyncio.wait(
+                    running,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except asyncio.CancelledError:
+                for task in running:
+                    task.cancel()
+                await asyncio.gather(*running, return_exceptions=True)
+                self.last_trajectory = list(events)
+                raise
             for task in sorted(completed, key=lambda item: running[item]):
                 name = running.pop(task)
                 try:
@@ -405,6 +422,25 @@ class StreamOrchestrator:
             if outputs[name] is not None
         )
 
+    @classmethod
+    def _handler_accepts_state(cls, node: _Node) -> bool:
+        handler = cls._resolve_handler(node.handler)
+        if handler is None:
+            return False
+        try:
+            parameters = list(inspect.signature(handler).parameters.values())
+        except (TypeError, ValueError):
+            return False
+        return (
+            any(parameter.name == "state" for parameter in parameters)
+            or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+            or sum(
+                parameter.kind
+                in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                for parameter in parameters
+            ) >= 2
+        )
+
     async def execute_trajectory(
         self,
         metric_payload: Optional[Mapping[str, Any]] = None,
@@ -418,19 +454,23 @@ class StreamOrchestrator:
         active_window = self.compute_sliding_window()
         tokens = self.compress_to_semantic_tokens(active_window)
         cache_key, namespace, vector = self._cache_context(tokens)
-        cached = self.cache.get(cache_key, vector, namespace=namespace)
-        if cached is not None:
-            self.last_trajectory = [{"event": "cache_hit"}]
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self.telemetry.record_trace_latency("CacheLookup", duration_ms)
-            self.telemetry.track_client_render_fps(simulated_frame_rate, len(tokens))
-            return f"[Cache Hit] {cached}"
+        cacheable = not any(
+            self._handler_accepts_state(node) for node in self._nodes.values()
+        )
+        if cacheable:
+            cached = self.cache.get(cache_key, vector, namespace=namespace)
+            if cached is not None:
+                self.last_trajectory = [{"event": "cache_hit"}]
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                self.telemetry.record_trace_latency("CacheLookup", duration_ms)
+                self.telemetry.track_client_render_fps(simulated_frame_rate, len(tokens))
+                return f"[Cache Hit] {cached}"
 
         self._validate_graph()
         outputs, tool_results, events = await self._run_graph(tokens, active_window)
         self.last_trajectory = list(events)
         rendered = self._render_outputs(outputs)
-        if not any(tool_results.values()):
+        if cacheable and not any(tool_results.values()):
             self.cache.set(cache_key, rendered, vector, namespace=namespace)
         duration_ms = (time.perf_counter() - start_time) * 1000
         self.telemetry.record_trace_latency("FullPipelineStep", duration_ms)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from dataclasses import dataclass
 
 import pytest
@@ -67,7 +68,7 @@ class AutomatedTrajectoryJudge:
         tool_completed = [
             event["tool"] for event in trajectory if event["event"] == "tool_completed"
         ]
-        if tool_started != tool_completed:
+        if Counter(tool_started) != Counter(tool_completed):
             issues.append("tool validation: tool start/completion events do not match")
         if not set(tool_started).issubset(set(allowed_tools)):
             issues.append("tool validation: an unapproved tool was called")
@@ -114,6 +115,90 @@ def test_sliding_window_bounds_and_semantic_tokens():
     assert heart_rate["samples"] == 1
     assert heart_rate["mean"] == 76
     assert heart_rate["trend"] == 0
+
+
+def test_sliding_window_orders_late_measurements_by_event_time():
+    orchestrator = StreamOrchestrator(clock=lambda: 100.0)
+    orchestrator.ingest_telemetry({"timestamp": 95, "metric": "heart_rate", "value": 80})
+    orchestrator.ingest_telemetry({"timestamp": 90, "metric": "heart_rate", "value": 60})
+
+    tokens = orchestrator.compress_to_semantic_tokens(orchestrator.compute_sliding_window())
+
+    assert tokens[0]["latest"] == 80
+    assert tokens[0]["trend"] == 20
+
+
+def test_sliding_window_retains_future_measurements_until_active():
+    now = [100.0]
+    orchestrator = StreamOrchestrator(clock=lambda: now[0])
+    orchestrator.ingest_telemetry({"timestamp": 101, "metric": "heart_rate", "value": 80})
+
+    assert orchestrator.compute_sliding_window() == []
+    now[0] = 101.0
+    assert len(orchestrator.compute_sliding_window()) == 1
+
+
+def test_shared_cache_isolated_between_orchestrators():
+    cache = SemanticCache()
+    first = StreamOrchestrator(cache=cache)
+    second = StreamOrchestrator(cache=cache)
+    first.register_node("worker", lambda tokens: "first")
+    second.register_node("worker", lambda tokens: "second")
+
+    assert first.execute_trajectory_step({"metric": "hrv", "value": 45}) == "[worker Output]: first"
+    assert second.execute_trajectory_step({"metric": "hrv", "value": 45}) == "[worker Output]: second"
+
+
+def test_state_aware_handlers_do_not_use_token_only_cache():
+    now = [100.0]
+    orchestrator = StreamOrchestrator(window_size_seconds=1, clock=lambda: now[0])
+
+    def worker(tokens, state):
+        return state["window"][0]["user_id"]
+
+    orchestrator.register_node("worker", worker)
+    first = orchestrator.execute_trajectory_step({
+        "timestamp": 100,
+        "metric": "hrv",
+        "value": 45,
+        "user_id": "first",
+    })
+    now[0] = 102.0
+    second = orchestrator.execute_trajectory_step({
+        "timestamp": 102,
+        "metric": "hrv",
+        "value": 45,
+        "user_id": "second",
+    })
+
+    assert first == "[worker Output]: first"
+    assert second == "[worker Output]: second"
+
+
+def test_cancelled_trajectory_cancels_and_awaits_running_nodes():
+    async def run():
+        orchestrator = StreamOrchestrator()
+        started = asyncio.Event()
+        cleaned = asyncio.Event()
+
+        async def worker(tokens):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+        orchestrator.register_node("worker", worker)
+        trajectory = asyncio.create_task(
+            orchestrator.execute_trajectory({"metric": "hrv", "value": 45})
+        )
+        await started.wait()
+        trajectory.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await trajectory
+        assert cleaned.is_set()
+
+    asyncio.run(run())
 
 
 def test_async_graph_runs_parallel_nodes_then_dependencies():
@@ -284,6 +369,16 @@ def test_semantic_cache_tiers_similarity_and_expiration():
     assert cache.get_baseline("user-1", "hrv") == {"mean": 45}
 
 
+def test_semantic_cache_keys_and_lru_are_namespace_scoped():
+    cache = SemanticCache(max_entries=2)
+    cache.set("k", "A", namespace="A")
+    cache.set("k", "B", namespace="B")
+
+    assert cache.get("k", namespace="A") == "A"
+    assert cache.get("k", namespace="B") == "B"
+    assert len(cache._entries) == 2
+
+
 def test_automated_judge_detects_drift_and_invalid_tool_trajectory():
     tokens = [{"type": "metric_summary", "metric": "heart_rate"}]
     trace = [
@@ -325,6 +420,23 @@ def test_automated_judge_accepts_stable_complete_trajectory():
         expected_metrics=("heart_rate", "hrv"),
         expected_nodes=("processor",),
         allowed_tools=("persist_baseline",),
+    )
+
+    assert judged == JudgeResult(passed=True, issues=[])
+
+
+def test_automated_judge_accepts_concurrent_tool_completion_order():
+    trace = [
+        {"event": "tool_started", "node": "first", "tool": "tool_a"},
+        {"event": "tool_started", "node": "second", "tool": "tool_b"},
+        {"event": "tool_completed", "node": "second", "tool": "tool_b"},
+        {"event": "tool_completed", "node": "first", "tool": "tool_a"},
+    ]
+
+    judged = AutomatedTrajectoryJudge.evaluate(
+        [],
+        trace,
+        allowed_tools=("tool_a", "tool_b"),
     )
 
     assert judged == JudgeResult(passed=True, issues=[])
