@@ -66,6 +66,41 @@ print(result)
 
 The synchronous `execute_trajectory_step` method is provided for legacy callers. Async applications should await `execute_trajectory` or `execute_trajectory_step_async`.
 
+## Biometric graph nodes
+
+`BiometricProcessor` exposes the engine's metric summaries to downstream graph
+nodes. `RecoveryEvaluator` compares available summary means to baselines stored
+in `SemanticCache`; it returns numeric deltas and percentage changes, not a
+health assessment or recovery recommendation. Missing baselines are omitted,
+and percentage change is `None` when a baseline is zero.
+
+```python
+from src.agents import BiometricProcessor, RecoveryEvaluator
+from src.engine import StreamOrchestrator
+from src.memory import SemanticCache
+
+cache = SemanticCache()
+cache.set_baseline("user-1", "heart_rate", {"mean": 60})
+orchestrator = StreamOrchestrator(cache=cache)
+orchestrator.register_node("biometrics", BiometricProcessor())
+orchestrator.register_node(
+    "recovery",
+    RecoveryEvaluator(cache, "user-1"),
+    depends_on=("biometrics",),
+)
+```
+
+## Scope and gaps
+
+The repository provides timestamp-bounded aggregation, a dependency-aware async
+graph, local semantic caching, generic user baselines, performance sample
+collection, and deterministic trajectory tests. It does not currently provide
+hardware-specific parsers, distributed cache or cluster execution, model-based
+semantic embeddings/inference, a clinical recovery score, real browser
+rendering instrumentation, or measured sub-millisecond performance guarantees.
+Frame rate is a caller-supplied simulation value, and trajectory evaluation is
+deterministic rather than an LLM-as-a-judge call.
+
 ## Tests
 
 Install the test dependencies and run the deterministic validation suite:

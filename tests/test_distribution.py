@@ -13,7 +13,7 @@ def test_distribution_preserves_runtime_package():
 
     assert config["tool"]["setuptools"]["packages"] == ["src"]
     assert config["tool"]["setuptools"]["include-package-data"] is False
-    for module in ("__init__", "engine", "memory"):
+    for module in ("__init__", "agents", "engine", "memory"):
         assert (ROOT / "src" / f"{module}.py").is_file()
 
 
